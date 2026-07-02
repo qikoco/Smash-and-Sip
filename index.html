@@ -155,6 +155,10 @@ nav::-webkit-scrollbar{display:none;}
 .section-title{font-family:'Bebas Neue',sans-serif;font-size:22px;color:var(--text);letter-spacing:0.05em;margin-bottom:4px;}
 .section-sub{font-size:13px;color:var(--muted);margin-bottom:16px;}
 
+/* DIRECTIONS BTN */
+.directions-btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:14px;border-radius:10px;background:var(--green);border:none;color:#fff;font-family:"DM Sans",sans-serif;font-size:14px;font-weight:700;cursor:pointer;text-decoration:none;margin-bottom:16px;transition:all 0.2s;}
+.directions-btn:hover{background:var(--green-dim);}
+
 /* INFO PAGE */
 .info-card{background:#fff;border:2px solid var(--border);border-radius:12px;padding:16px;margin-bottom:12px;}
 .info-card-title{font-weight:600;font-size:14px;color:var(--text);margin-bottom:10px;display:flex;align-items:center;gap:8px;}
@@ -261,6 +265,20 @@ nav::-webkit-scrollbar{display:none;}
     <div class="info-row"><span class="info-label">Slot Duration</span><span class="info-val">1 Hour</span></div>
     <div class="info-row"><span class="info-label">Price per Slot</span><span class="info-val">₹400 / hour</span></div>
     <div class="info-row"><span class="info-label">Payment</span><span class="info-val">Cash / UPI at venue</span></div>
+  </div>
+
+  <a class="directions-btn" href="https://maps.app.goo.gl/fa1m2yZ5DipwQNhJ8" target="_blank">
+    📍 Get Directions on Google Maps
+  </a>
+
+  <div class="info-card" style="padding:0;overflow:hidden;margin-bottom:12px;">
+    <iframe 
+      src="https://maps.google.com/maps?q=Smash+and+Sip+Pickleball+Alwar&output=embed" 
+      width="100%" 
+      height="200" 
+      style="border:none;display:block;"
+      allowfullscreen>
+    </iframe>
   </div>
 
   <div class="info-card">
