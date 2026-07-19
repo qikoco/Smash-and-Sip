@@ -5,24 +5,23 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Smash & Sip — Court Booking</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
-<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 :root{
-  --green:#1B5FA8;
-  --green-light:#3B82C4;
-  --green-pale:#E8F1FA;
-  --green-dim:#134A80;
+  --green:#1B8A3E;
+  --green-light:#2AAD52;
+  --green-pale:#E8F5ED;
+  --green-dim:#156B30;
   --white:#FFFFFF;
-  --off-white:#F5F9FC;
-  --gray:#EEF3F7;
-  --border:#CBDEEE;
-  --text:#16233A;
-  --muted:#5F7B95;
+  --off-white:#F7FAF8;
+  --gray:#F0F4F2;
+  --border:#D4E6DA;
+  --text:#1A2E22;
+  --muted:#6B8C76;
   --red:#E53935;
   --yellow:#F5A623;
-  --court-line:rgba(27,95,168,0.15);
+  --court-line:rgba(27,138,62,0.15);
 }
 body{background:var(--off-white);color:var(--text);font-family:'DM Sans',sans-serif;font-weight:400;min-height:100vh;}
 
@@ -364,6 +363,7 @@ window.addEventListener('load', () => {
     const { createClient } = supabase;
     sbClient = createClient(SUPABASE_URL, SUPABASE_KEY);
     console.log('Supabase initialized successfully');
+    subscribeToBookingChanges();
     loadSlots();
   } catch(e) {
     console.error('Supabase init failed:', e);
@@ -371,8 +371,15 @@ window.addEventListener('load', () => {
   }
 });
 
-// ===== EDGE FUNCTIONS =====
-const FUNCTIONS_URL = `${SUPABASE_URL}/functions/v1`;
+// ===== REALTIME: refresh slots the instant anyone books =====
+function subscribeToBookingChanges() {
+  sbClient
+    .channel('bookings-realtime')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings' }, () => {
+      loadSlots();
+    })
+    .subscribe();
+}
 
 // ===== OWNER WHATSAPP =====
 const OWNER_PHONE = '919351407925';
@@ -435,9 +442,26 @@ function selectCourt(court, btn) {
 }
 
 // ===== LOAD SLOTS =====
+// ===== LOAD SLOTS =====
 async function loadSlots() {
   const container = document.getElementById('slotsContainer');
   container.innerHTML = '<div class="loading"><div class="loading-spinner"></div>Loading slots...</div>';
+
+  // Check if this date/court is closed first
+  if (sbClient) {
+    try {
+      const { data: closures } = await sbClient
+        .from('closures')
+        .select('reason, court')
+        .lte('date_from', selectedDate)
+        .gte('date_to', selectedDate);
+      const closed = closures && closures.find(c => c.court === null || c.court === selectedCourt);
+      if (closed) {
+        renderClosed(closed.reason);
+        return;
+      }
+    } catch(e) { console.log('Closure check skipped'); }
+  }
 
   // Load bookings from Supabase or localStorage fallback
   let booked = [];
@@ -452,12 +476,22 @@ async function loadSlots() {
       if (data) booked = data.map(b => b.slot_hour);
     } catch(e) { console.log('Using local fallback'); }
   } else {
-    // Fallback: use localStorage
     const key = `sns_booked_${selectedDate}_${selectedCourt}`;
     booked = JSON.parse(localStorage.getItem(key) || '[]');
   }
 
   renderSlots(booked);
+}
+
+// ===== RENDER CLOSED =====
+function renderClosed(reason) {
+  const container = document.getElementById('slotsContainer');
+  container.innerHTML = `<div class="empty-state">
+    <span class="empty-state-icon">🚫</span>
+    <p>Court closed for this date.${reason ? '<br>' + reason : ''}</p>
+  </div>`;
+  selectedSlot = null;
+  updateBookingBar();
 }
 
 // ===== RENDER SLOTS =====
@@ -556,7 +590,7 @@ function closeModalSuccess() {
   loadSlots();
 }
 
-// ===== CONFIRM BOOKING (Razorpay flow) =====
+// ===== CONFIRM BOOKING =====
 async function confirmBooking() {
   const name = document.getElementById('customerName').value.trim();
   const phone = document.getElementById('customerPhone').value.trim();
@@ -567,7 +601,7 @@ async function confirmBooking() {
 
   const btn = document.getElementById('confirmBtn');
   btn.disabled = true;
-  btn.textContent = 'Starting payment...';
+  btn.textContent = 'Booking...';
 
   const slot = TIME_SLOTS.find(s => s.hour === selectedSlot);
   const bookingId = 'SNS' + Date.now().toString().slice(-6);
@@ -587,94 +621,34 @@ async function confirmBooking() {
     created_at: new Date().toISOString()
   };
 
-  try {
-    // Step 1: ask our create-order Edge Function for a Razorpay order
-    const orderRes = await fetch(`${FUNCTIONS_URL}/create-order`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${SUPABASE_KEY}`
-      },
-      body: JSON.stringify({ amount: booking.amount })
-    });
-    const orderData = await orderRes.json();
-    if (!orderRes.ok) throw new Error(orderData.error || 'Could not start payment');
-
-    // Step 2: open Razorpay's checkout popup
-    const rzp = new Razorpay({
-      key: orderData.key_id,
-      amount: orderData.order.amount,
-      currency: orderData.order.currency,
-      name: 'Smash & Sip',
-      description: `Court ${booking.court} · ${booking.slot_label} – ${booking.slot_end}`,
-      order_id: orderData.order.id,
-      prefill: { name, contact: phone },
-      theme: { color: '#1B5FA8' },
-      handler: async function (response) {
-        await verifyAndSaveBooking(response, booking);
-      },
-      modal: {
-        ondismiss: function () {
-          btn.disabled = false;
-          btn.textContent = 'Confirm & Book Court';
-        }
-      }
-    });
-    rzp.on('payment.failed', function () {
-      alert('Payment failed. Please try again.');
-      btn.disabled = false;
-      btn.textContent = 'Confirm & Book Court';
-    });
-    rzp.open();
-  } catch (err) {
-    alert(err.message || 'Something went wrong starting payment.');
-    btn.disabled = false;
-    btn.textContent = 'Confirm & Book Court';
+  // Save to Supabase or localStorage fallback
+  let saved = false;
+  if (sbClient) {
+    try {
+      const { error } = await sbClient.from('bookings').insert([booking]);
+      if (!error) saved = true;
+    } catch(e) { console.log('Supabase error, using local'); }
   }
-}
 
-// ===== VERIFY PAYMENT (server saves the booking itself) =====
-async function verifyAndSaveBooking(razorpayResponse, booking) {
-  const btn = document.getElementById('confirmBtn');
-  btn.textContent = 'Confirming...';
-
-  booking.payment_id = razorpayResponse.razorpay_payment_id;
-  booking.order_id = razorpayResponse.razorpay_order_id;
-
-  try {
-    const verifyRes = await fetch(`${FUNCTIONS_URL}/verify-payment`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${SUPABASE_KEY}`
-      },
-      body: JSON.stringify({
-        razorpay_order_id: razorpayResponse.razorpay_order_id,
-        razorpay_payment_id: razorpayResponse.razorpay_payment_id,
-        razorpay_signature: razorpayResponse.razorpay_signature,
-        booking
-      })
-    });
-    const verifyData = await verifyRes.json();
-    if (!verifyRes.ok || !verifyData.success) {
-      throw new Error(verifyData.error || 'Payment could not be verified. If money was deducted, it will be refunded automatically.');
-    }
-
-    // Booking is already saved in Supabase by verify-payment (service role).
-    // Just keep a local copy for the "My Bookings" tab.
-    myBookings.unshift(booking);
-    localStorage.setItem('sns_my_bookings', JSON.stringify(myBookings));
-
-    sendOwnerWhatsApp(booking);
-
-    btn.disabled = false;
-    btn.textContent = 'Confirm & Book Court';
-    showSuccess(booking);
-  } catch (err) {
-    alert(err.message || 'Payment verification failed.');
-    btn.disabled = false;
-    btn.textContent = 'Confirm & Book Court';
+  if (!saved) {
+    // LocalStorage fallback
+    const key = `sns_booked_${selectedDate}_${selectedCourt}`;
+    const existing = JSON.parse(localStorage.getItem(key) || '[]');
+    existing.push(selectedSlot);
+    localStorage.setItem(key, JSON.stringify(existing));
   }
+
+  // Save to my bookings
+  myBookings.unshift(booking);
+  localStorage.setItem('sns_my_bookings', JSON.stringify(myBookings));
+
+  // Send WhatsApp to owner
+  sendOwnerWhatsApp(booking);
+
+  // Show success
+  btn.disabled = false;
+  btn.textContent = 'Confirm & Book Court';
+  showSuccess(booking);
 }
 
 // ===== WHATSAPP OWNER =====
